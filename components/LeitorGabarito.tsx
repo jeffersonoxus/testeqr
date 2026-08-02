@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useOpenCV } from "@/hooks/useOpenCV";
-import { GRID, PAGINA, gerarCoordenadasBolhas } from "@/lib/gabaritoLayout";
+import { GRID, PAGINA, AREA_GABARITO, gerarCoordenadasBolhas } from "@/lib/gabaritoLayout";
 
 const LARGURA_CORRIGIDA = 800;
-const ALTURA_CORRIGIDA = Math.round((PAGINA.alturaMm / PAGINA.larguraMm) * LARGURA_CORRIGIDA);
+const ALTURA_AREA_MM = AREA_GABARITO.fimYMm - AREA_GABARITO.inicioYMm; // 148.5mm
+const ALTURA_CORRIGIDA = Math.round((ALTURA_AREA_MM / PAGINA.larguraMm) * LARGURA_CORRIGIDA);
 
 export default function LeitorGabarito() {
   const { cv, pronto } = useOpenCV();
@@ -70,12 +71,13 @@ export default function LeitorGabarito() {
 
     function lerRespostas(matBinaria: any) {
       const fatorX = LARGURA_CORRIGIDA / PAGINA.larguraMm;
-      const fatorY = ALTURA_CORRIGIDA / PAGINA.alturaMm;
+      const fatorY = ALTURA_CORRIGIDA / ALTURA_AREA_MM;
       const raioPx = Math.round(GRID.raioBolhaMm * fatorX * 0.8);
       const porQuestao: Record<number, { alt: string; px: number }[]> = {};
 
       gerarCoordenadasBolhas().forEach(({ questao, alternativa, xMm, yMm }) => {
-        const cx = Math.round(xMm * fatorX), cy = Math.round(yMm * fatorY);
+        const cx = Math.round(xMm * fatorX);
+        const cy = Math.round((yMm - AREA_GABARITO.inicioYMm) * fatorY);
         const mascara = cv.Mat.zeros(matBinaria.rows, matBinaria.cols, cv.CV_8UC1);
         cv.circle(mascara, new cv.Point(cx, cy), raioPx, new cv.Scalar(255), -1);
         const res = new cv.Mat();
