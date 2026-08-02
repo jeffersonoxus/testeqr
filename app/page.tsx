@@ -1,18 +1,20 @@
-// app/page.tsx - Versão Corrigida
-
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 export default function Home() {
   const [aba, setAba] = useState<'gerar' | 'ler'>('ler');
   const [resultado, setResultado] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [debug, setDebug] = useState<string[]>([]);
+  const [bolinhasDetectadas, setBolinhasDetectadas] = useState<any[]>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const [imagemPreview, setImagemPreview] = useState<string | null>(null);
+  const [cameraAtiva, setCameraAtiva] = useState(false);
 
-  // ========== LER GABARITO REAL ==========
+  // ========== INICIAR CÂMERA ==========
   const iniciarCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -25,17 +27,30 @@ export default function Home() {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+        setCameraAtiva(true);
+        addDebug('✅ Câmera iniciada');
       }
     } catch (error) {
       alert('Erro ao acessar câmera: ' + error);
+      addDebug('❌ Erro na câmera');
     }
   };
 
+  const addDebug = (msg: string) => {
+    setDebug(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  };
+
+  // ========== CAPTURAR E LER ==========
   const capturarELer = () => {
-    if (!videoRef.current || !canvasRef.current) return;
+    if (!videoRef.current || !canvasRef.current) {
+      addDebug('❌ Video ou Canvas não disponível');
+      return;
+    }
     
     setLoading(true);
     setResultado(null);
+    setBolinhasDetectadas([]);
+    addDebug('📸 Capturando imagem...');
     
     const canvas = canvasRef.current;
     const video = videoRef.current;
@@ -44,33 +59,43 @@ export default function Home() {
     const ctx = canvas.getContext('2d')!;
     ctx.drawImage(video, 0, 0);
     
-    setImagemPreview(canvas.toDataURL('image/jpeg', 0.8));
+    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    setImagemPreview(imageDataUrl);
+    addDebug(`📷 Imagem capturada: ${canvas.width}x${canvas.height}`);
     
+    // Processar
     setTimeout(() => {
-      const respostas = processarGabarito(canvas);
+      const resultado = processarGabarito(canvas);
       
-      if (respostas && Object.keys(respostas).length > 0) {
+      if (resultado && Object.keys(resultado.respostas).length > 0) {
         setResultado({
           id: '2025001',
           nome: 'João Silva',
           turma: '3A',
           prova: 'MATEMÁTICA',
-          respostas: respostas,
-          total: Object.keys(respostas).length
+          respostas: resultado.respostas,
+          total: Object.keys(resultado.respostas).length
         });
+        addDebug(`✅ ${resultado.total} questões detectadas`);
       } else {
-        alert('Nenhuma bolinha detectada. Tente enquadrar melhor o gabarito.');
+        addDebug('❌ Nenhuma bolinha detectada!');
+        addDebug('💡 Ajuste as coordenadas no código');
       }
       
       setLoading(false);
       
-      const tracks = (video.srcObject as MediaStream).getTracks();
-      tracks.forEach(track => track.stop());
-      video.srcObject = null;
-    }, 1000);
+      // Parar câmera
+      if (video.srcObject) {
+        const tracks = (video.srcObject as MediaStream).getTracks();
+        tracks.forEach(track => track.stop());
+        video.srcObject = null;
+        setCameraAtiva(false);
+      }
+    }, 500);
   };
 
-  const processarGabarito = (canvas: HTMLCanvasElement): Record<string, string> => {
+  // ========== PROCESSAR COM OVERLAY ==========
+  const processarGabarito = (canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext('2d')!;
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
@@ -79,22 +104,29 @@ export default function Home() {
     const questoes = 10;
     const alternativas = ['A', 'B', 'C', 'D', 'E'];
     
-    // CONFIGURAÇÃO - AJUSTE PARA SEU GABARITO
+    // CONFIGURAÇÃO - AJUSTE CONFORME SEU GABARITO
     const startX = 100;
     const startY = 200;
     const spacingX = 60;
     const spacingY = 40;
     const bolinhaRaio = 15;
     
+    addDebug(`🔍 Analisando posição inicial: X=${startX}, Y=${startY}`);
+    addDebug(`📏 Espaçamento: X=${spacingX}, Y=${spacingY}`);
+    
+    const bolinhasEncontradas: any[] = [];
+    
     for (let q = 0; q < questoes; q++) {
       let alternativaMarcada: string | null = null;
       let maiorEscuridao = 0;
+      let maioresDados: any = null;
       
       for (let a = 0; a < alternativas.length; a++) {
         const x = startX + (a * spacingX);
         const y = startY + (q * spacingY);
         
         if (x + bolinhaRaio > canvas.width || y + bolinhaRaio > canvas.height) {
+          addDebug(`⚠️ Posição Q${q+1}${alternativas[a]} (${x},${y}) fora da imagem`);
           continue;
         }
         
@@ -126,24 +158,90 @@ export default function Home() {
         
         const percentualEscuro = totalPixels > 0 ? (pixelsEscuros / totalPixels) * 100 : 0;
         
-        console.log(`Q${q+1}${alternativas[a]}: ${percentualEscuro.toFixed(1)}% escuro`);
+        // Guardar para debug
+        bolinhasEncontradas.push({
+          questao: q + 1,
+          alternativa: alternativas[a],
+          x,
+          y,
+          percentual: percentualEscuro,
+          marcada: percentualEscuro > 40
+        });
+        
+        addDebug(`Q${q+1}${alternativas[a]}: ${percentualEscuro.toFixed(1)}% escuro`);
         
         if (percentualEscuro > 40 && percentualEscuro > maiorEscuridao) {
           maiorEscuridao = percentualEscuro;
           alternativaMarcada = alternativas[a];
+          maioresDados = { x, y, percentual: percentualEscuro };
         }
       }
       
       if (alternativaMarcada) {
         respostas[(q + 1).toString()] = alternativaMarcada;
-        console.log(`✅ Q${q+1}: ${alternativaMarcada} (${maiorEscuridao.toFixed(1)}% escuro)`);
+        addDebug(`✅ Q${q+1}: ${alternativaMarcada} (${maiorEscuridao.toFixed(1)}% escuro)`);
       } else {
-        console.log(`❌ Q${q+1}: Não detectada`);
+        addDebug(`❌ Q${q+1}: Nenhuma alternativa detectada`);
       }
     }
     
-    console.log(`📊 Total detectado: ${Object.keys(respostas).length} questões`);
-    return respostas;
+    setBolinhasDetectadas(bolinhasEncontradas);
+    addDebug(`📊 Total: ${Object.keys(respostas).length} questões detectadas`);
+    
+    // Desenhar overlay no canvas
+    desenharOverlay(canvas, bolinhasEncontradas);
+    
+    return { respostas };
+  };
+
+  // ========== DESENHAR OVERLAY (ÂNCORAS VISUAIS) ==========
+  const desenharOverlay = (canvas: HTMLCanvasElement, bolinhas: any[]) => {
+    const overlayCanvas = overlayCanvasRef.current;
+    if (!overlayCanvas) return;
+    
+    overlayCanvas.width = canvas.width;
+    overlayCanvas.height = canvas.height;
+    const ctx = overlayCanvas.getContext('2d')!;
+    
+    // Limpar
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    
+    // Desenhar cada bolinha analisada
+    bolinhas.forEach(b => {
+      const x = b.x;
+      const y = b.y;
+      const raio = 15;
+      
+      // Cor conforme percentual de escuro
+      if (b.marcada) {
+        // Verde = detectada como marcada
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 4;
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+      } else if (b.percentual > 20) {
+        // Amarelo = parcialmente escura
+        ctx.strokeStyle = '#ffff00';
+        ctx.lineWidth = 3;
+        ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
+      } else {
+        // Vermelho = clara (não marcada)
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 2;
+      }
+      
+      // Desenhar círculo
+      ctx.beginPath();
+      ctx.arc(x, y, raio, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+      
+      // Escrever percentual
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${b.percentual.toFixed(0)}%`, x, y);
+    });
   };
 
   const pararCamera = () => {
@@ -151,73 +249,69 @@ export default function Home() {
       const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
       tracks.forEach(track => track.stop());
       videoRef.current.srcObject = null;
+      setCameraAtiva(false);
     }
     setResultado(null);
     setImagemPreview(null);
+    setBolinhasDetectadas([]);
+    setDebug([]);
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-blue-600 text-white p-4">
+      <div className="bg-blue-600 text-white p-4 sticky top-0 z-10">
         <h1 className="text-xl font-bold text-center">📋 Leitor de Gabarito</h1>
       </div>
 
-      {/* Abas */}
-      <div className="flex border-b bg-white">
-        <button
-          className={`flex-1 py-3 font-medium transition ${
-            aba === 'ler' 
-              ? 'text-blue-600 border-b-2 border-blue-600' 
-              : 'text-gray-500'
-          }`}
-          onClick={() => { setAba('ler'); setResultado(null); pararCamera(); }}
-        >
-          📸 Ler Gabarito
-        </button>
-      </div>
-
-      {/* Conteúdo */}
       <div className="p-4 max-w-md mx-auto">
-        <div className="space-y-4">
-          {/* Instruções */}
-          <div className="bg-blue-50 border border-blue-200 p-3 rounded text-sm text-blue-800">
-            💡 Aponte a câmera para o gabarito e clique em "Capturar"
-          </div>
+        {/* Status */}
+        <div className="bg-gray-100 p-2 rounded text-sm mb-4">
+          <span className="font-bold">Status: </span>
+          {cameraAtiva ? '🟢 Câmera ativa' : '⚪ Câmera parada'}
+          {loading && ' ⏳ Processando...'}
+        </div>
 
-          {/* Câmera */}
-          <div className="bg-black rounded-lg overflow-hidden relative">
-            <video
-              ref={videoRef}
-              className="w-full h-[400px] object-cover"
-              autoPlay
-              playsInline
-              muted
-            />
-            
-            {!videoRef.current?.srcObject && !resultado && !imagemPreview && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
-                <div className="text-center">
-                  <p className="text-4xl mb-2">📷</p>
-                  <p>Clique em "Iniciar Câmera"</p>
-                </div>
+        {/* Câmera com Overlay */}
+        <div className="bg-black rounded-lg overflow-hidden relative">
+          <video
+            ref={videoRef}
+            className="w-full h-[400px] object-cover"
+            autoPlay
+            playsInline
+            muted
+          />
+          
+          {/* Canvas do Overlay (mostra âncoras) */}
+          <canvas
+            ref={overlayCanvasRef}
+            className="absolute top-0 left-0 w-full h-[400px] object-cover pointer-events-none"
+          />
+          
+          {!cameraAtiva && !imagemPreview && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
+              <div className="text-center">
+                <p className="text-4xl mb-2">📷</p>
+                <p>Clique em "Iniciar Câmera"</p>
               </div>
-            )}
+            </div>
+          )}
 
-            {imagemPreview && !resultado && (
-              <img 
-                src={imagemPreview} 
-                alt="Preview" 
-                className="w-full h-[400px] object-cover"
-              />
-            )}
-          </div>
+          {imagemPreview && !resultado && (
+            <img 
+              src={imagemPreview} 
+              alt="Preview" 
+              className="w-full h-[400px] object-cover"
+            />
+          )}
+        </div>
 
-          {/* Botões */}
-          {!videoRef.current?.srcObject && !imagemPreview ? (
+        {/* Botões */}
+        <div className="space-y-2 mt-4">
+          {!cameraAtiva && !imagemPreview ? (
             <button
               onClick={iniciarCamera}
-              className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-lg shadow hover:bg-blue-700 transition"
+              className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow hover:bg-blue-700 transition"
             >
               📷 Iniciar Câmera
             </button>
@@ -227,7 +321,7 @@ export default function Home() {
                 <button
                   onClick={capturarELer}
                   disabled={loading}
-                  className="w-full bg-green-600 text-white py-3 rounded-lg font-bold text-lg shadow hover:bg-green-700 transition disabled:opacity-50"
+                  className="w-full bg-green-600 text-white py-3 rounded-lg font-bold shadow hover:bg-green-700 transition disabled:opacity-50"
                 >
                   {loading ? '⏳ Analisando...' : '📸 Capturar e Ler'}
                 </button>
@@ -237,7 +331,7 @@ export default function Home() {
                 onClick={() => { 
                   pararCamera(); 
                   setImagemPreview(null);
-                  iniciarCamera();
+                  setTimeout(iniciarCamera, 500);
                 }}
                 className="w-full bg-gray-600 text-white py-2 rounded-lg text-sm hover:bg-gray-700 transition"
               >
@@ -245,77 +339,81 @@ export default function Home() {
               </button>
             </>
           )}
+        </div>
 
-          {/* Resultado - CORRIGIDO */}
-          {resultado && (
-            <div className="bg-white rounded-lg shadow p-4 space-y-3 animate-in fade-in">
-              <div className="flex items-center justify-between">
-                <h3 className="font-bold text-lg text-green-600">✅ Gabarito Lido!</h3>
-                <button
-                  onClick={() => { setResultado(null); setImagemPreview(null); iniciarCamera(); }}
-                  className="text-sm text-blue-600"
-                >
-                  Nova Leitura
-                </button>
+        {/* DEBUG - MOSTRA O QUE ESTÁ ACONTECENDO */}
+        <div className="mt-4 bg-gray-900 text-green-400 p-3 rounded-lg text-xs font-mono max-h-[200px] overflow-y-auto">
+          <p className="text-white font-bold mb-1">🐛 DEBUG:</p>
+          {debug.length === 0 ? (
+            <p className="text-gray-500">Aguardando ação...</p>
+          ) : (
+            debug.map((msg, i) => (
+              <div key={i} className="border-b border-gray-800 py-0.5">
+                {msg}
               </div>
-              
-              <div className="grid grid-cols-2 gap-2 text-sm bg-gray-50 p-3 rounded">
-                <div><strong>ID:</strong> {resultado.id}</div>
-                <div><strong>Nome:</strong> {resultado.nome}</div>
-                <div><strong>Turma:</strong> {resultado.turma}</div>
-                <div><strong>Prova:</strong> {resultado.prova}</div>
-              </div>
-
-              <div>
-                <p className="font-semibold text-sm mb-2">
-                  Respostas ({resultado.total} de 10 questões detectadas)
-                </p>
-                <div className="grid grid-cols-5 gap-2">
-                  {Object.entries(resultado.respostas).map(([q, r]) => {
-                    // Garantir que r é string
-                    const resposta = String(r);
-                    return (
-                      <div key={q} className="bg-blue-50 border border-blue-200 rounded p-2 text-center">
-                        <div className="text-xs text-gray-500">{q}</div>
-                        <div className="font-bold text-blue-700">{resposta}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <details className="text-xs">
-                <summary className="cursor-pointer text-gray-500">📋 Ver JSON completo</summary>
-                <pre className="bg-gray-100 p-2 rounded mt-1 overflow-x-auto text-xs">
-                  {JSON.stringify(resultado, null, 2)}
-                </pre>
-              </details>
-
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(JSON.stringify(resultado, null, 2));
-                  alert('✅ JSON copiado!');
-                }}
-                className="w-full bg-gray-100 text-gray-700 py-2 rounded text-sm hover:bg-gray-200 transition"
-              >
-                📋 Copiar JSON
-              </button>
-            </div>
-          )}
-
-          {/* Debug */}
-          {imagemPreview && !resultado && (
-            <div className="bg-yellow-50 border border-yellow-200 p-3 rounded text-xs text-yellow-800">
-              <p>💡 <strong>Dica:</strong> Se não estiver detectando, ajuste as coordenadas:</p>
-              <pre className="mt-1 bg-yellow-100 p-2 rounded overflow-x-auto text-xs">
-                startX = 100  ← posição X da primeira bolinha<br/>
-                startY = 200  ← posição Y da primeira bolinha<br/>
-                spacingX = 60 ← distância entre A-B-C-D-E<br/>
-                spacingY = 40 ← distância entre questões
-              </pre>
-            </div>
+            ))
           )}
         </div>
+
+        {/* Resultado */}
+        {resultado && (
+          <div className="mt-4 bg-white rounded-lg shadow p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-lg text-green-600">✅ Gabarito Lido!</h3>
+              <button
+                onClick={() => { setResultado(null); setImagemPreview(null); }}
+                className="text-sm text-blue-600"
+              >
+                Nova Leitura
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2 text-sm bg-gray-50 p-3 rounded">
+              <div><strong>ID:</strong> {resultado.id}</div>
+              <div><strong>Nome:</strong> {resultado.nome}</div>
+              <div><strong>Turma:</strong> {resultado.turma}</div>
+              <div><strong>Prova:</strong> {resultado.prova}</div>
+            </div>
+
+            <div>
+              <p className="font-semibold text-sm mb-2">
+                Respostas ({resultado.total} de 10 detectadas)
+              </p>
+              <div className="grid grid-cols-5 gap-2">
+                {Object.entries(resultado.respostas).map(([q, r]) => (
+                  <div key={q} className="bg-blue-50 border border-blue-200 rounded p-2 text-center">
+                    <div className="text-xs text-gray-500">{q}</div>
+                    <div className="font-bold text-blue-700">{String(r)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <details className="text-xs">
+              <summary className="cursor-pointer text-gray-500">📋 Ver JSON</summary>
+              <pre className="bg-gray-100 p-2 rounded mt-1 overflow-x-auto">
+                {JSON.stringify(resultado, null, 2)}
+              </pre>
+            </details>
+          </div>
+        )}
+
+        {/* Ajuda para ajustar coordenadas */}
+        {debug.some(d => d.includes('Nenhuma bolinha')) && (
+          <div className="mt-4 bg-yellow-50 border border-yellow-200 p-3 rounded text-xs text-yellow-800">
+            <p className="font-bold">💡 Nenhuma bolinha detectada!</p>
+            <p className="mt-1">Ajuste as coordenadas no código:</p>
+            <pre className="mt-1 bg-yellow-100 p-2 rounded overflow-x-auto">
+              startX = 100  ← Posição X da 1ª bolinha (A da Q1)<br/>
+              startY = 200  ← Posição Y da 1ª bolinha (A da Q1)<br/>
+              spacingX = 60 ← Distância entre alternativas<br/>
+              spacingY = 40 ← Distância entre questões
+            </pre>
+            <p className="mt-2 text-red-600 font-bold">
+              ⚠️ IMPORTANTE: O overlay mostra onde o app está procurando!
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
