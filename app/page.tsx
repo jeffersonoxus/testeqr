@@ -8,6 +8,7 @@ interface Ancora {
   x: number;
   y: number;
   tamanho: number;
+  padrao: number[][]; // 4x4 ou 6x6 checkerboard
 }
 
 interface Bolinha {
@@ -26,26 +27,43 @@ interface Gabarito {
 }
 
 // ========== CONFIGURAÇÃO DO GABARITO ==========
+// 12 Âncoras com padrão CHECKERBOARD 4x4
+// Cada âncora é um quadrado com padrão xadrez (mais fácil de detectar)
+
+const criarPadraoCheckerboard = (tamanho: number): number[][] => {
+  const padrao: number[][] = [];
+  for (let i = 0; i < tamanho; i++) {
+    padrao[i] = [];
+    for (let j = 0; j < tamanho; j++) {
+      padrao[i][j] = (i + j) % 2 === 0 ? 0 : 1; // 0=preto, 1=branco
+    }
+  }
+  return padrao;
+};
+
 const CONFIG_GABARITO: Gabarito = {
   questoes: 9,
   alternativas: ['a', 'b', 'c', 'd', 'e'],
   ancoras: [
-    // 12 âncoras formando um quadrado (3x4)
-    // Fileira 1
-    { id: 1, x: 30, y: 30, tamanho: 16 },
-    { id: 2, x: 200, y: 30, tamanho: 16 },
-    { id: 3, x: 370, y: 30, tamanho: 16 },
-    { id: 4, x: 540, y: 30, tamanho: 16 },
-    // Fileira 2
-    { id: 5, x: 30, y: 160, tamanho: 16 },
-    { id: 6, x: 200, y: 160, tamanho: 16 },
-    { id: 7, x: 370, y: 160, tamanho: 16 },
-    { id: 8, x: 540, y: 160, tamanho: 16 },
-    // Fileira 3
-    { id: 9, x: 30, y: 290, tamanho: 16 },
-    { id: 10, x: 200, y: 290, tamanho: 16 },
-    { id: 11, x: 370, y: 290, tamanho: 16 },
-    { id: 12, x: 540, y: 290, tamanho: 16 },
+    // TOPO (4 âncoras)
+    { id: 1, x: 20, y: 15, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    { id: 2, x: 150, y: 15, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    { id: 3, x: 300, y: 15, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    { id: 4, x: 450, y: 15, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    
+    // LATERAL ESQUERDA (2 âncoras)
+    { id: 5, x: 15, y: 130, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    { id: 6, x: 15, y: 260, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    
+    // LATERAL DIREITA (2 âncoras)
+    { id: 7, x: 470, y: 130, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    { id: 8, x: 470, y: 260, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    
+    // RODAPÉ (4 âncoras)
+    { id: 9, x: 20, y: 350, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    { id: 10, x: 150, y: 350, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    { id: 11, x: 300, y: 350, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
+    { id: 12, x: 450, y: 350, tamanho: 20, padrao: criarPadraoCheckerboard(4) },
   ]
 };
 
@@ -55,12 +73,14 @@ export default function Home() {
   const [resultado, setResultado] = useState<any>(null);
   const [debug, setDebug] = useState<string[]>([]);
   const [status, setStatus] = useState('Aguardando...');
+  const [fps, setFps] = useState(5);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const frameIdRef = useRef<number | null>(null);
+  const frameIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [contagemFrames, setContagemFrames] = useState(0);
 
   const addDebug = (msg: string) => {
     setDebug(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -70,7 +90,7 @@ export default function Home() {
   const gerarGabarito = () => {
     const canvas = document.createElement('canvas');
     canvas.width = 600;
-    canvas.height = 400;
+    canvas.height = 420;
     const ctx = canvas.getContext('2d')!;
 
     // Fundo branco
@@ -79,33 +99,33 @@ export default function Home() {
 
     // Título
     ctx.fillStyle = '#000';
-    ctx.font = 'bold 18px Arial';
+    ctx.font = 'bold 16px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('GABARITO - 1ºTA - 1º ETAPA 2019', canvas.width / 2, 25);
+    ctx.fillText('1ºTA - 1º ETAPA - 2019 - 1º ANO', canvas.width / 2, 40);
 
-    // ===== DESENHAR ÂNCORAS (12) =====
+    // ===== DESENHAR ÂNCORAS (12 com padrão CHECKERBOARD) =====
     CONFIG_GABARITO.ancoras.forEach(ancora => {
       const size = ancora.tamanho;
-      const padrao = [
-        [0, 1],
-        [1, 0]
-      ];
+      const padrao = ancora.padrao;
+      const cellSize = size / padrao.length;
       
-      // Desenhar 2x2 com padrão preto/branco
-      for (let row = 0; row < 2; row++) {
-        for (let col = 0; col < 2; col++) {
-          const x = ancora.x + (col * size / 2);
-          const y = ancora.y + (row * size / 2);
+      // Desenhar cada célula do checkerboard
+      for (let row = 0; row < padrao.length; row++) {
+        for (let col = 0; col < padrao[row].length; col++) {
+          const x = ancora.x + (col * cellSize);
+          const y = ancora.y + (row * cellSize);
           
           ctx.fillStyle = padrao[row][col] === 0 ? '#000000' : '#FFFFFF';
-          ctx.fillRect(x, y, size / 2, size / 2);
+          ctx.fillRect(x, y, cellSize, cellSize);
+          
+          // Borda para contraste
           ctx.strokeStyle = '#999';
           ctx.lineWidth = 0.5;
-          ctx.strokeRect(x, y, size / 2, size / 2);
+          ctx.strokeRect(x, y, cellSize, cellSize);
         }
       }
       
-      // Borda da âncora
+      // Borda externa da âncora (vermelha para visualização, mas o app não usa cor)
       ctx.strokeStyle = '#FF0000';
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 2]);
@@ -121,10 +141,10 @@ export default function Home() {
 
     // ===== DESENHAR BOLINHAS =====
     const { questoes, alternativas } = CONFIG_GABARITO;
-    const startX = 120;
-    const startY = 70;
+    const startX = 100;
+    const startY = 75;
     const spacingX = 55;
-    const spacingY = 32;
+    const spacingY = 30;
     const raio = 10;
 
     for (let q = 0; q < questoes; q++) {
@@ -133,7 +153,7 @@ export default function Home() {
       ctx.font = 'bold 11px Arial';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`Q.${q+1}`, startX - 15, startY + (q * spacingY));
+      ctx.fillText(`Q.${q+1}`, startX - 12, startY + (q * spacingY));
 
       for (let a = 0; a < alternativas.length; a++) {
         const x = startX + (a * spacingX);
@@ -146,9 +166,9 @@ export default function Home() {
         ctx.lineWidth = 1.5;
         ctx.stroke();
         
-        // Letra
+        // Letra da alternativa (dentro da bolinha)
         ctx.fillStyle = '#000';
-        ctx.font = '10px Arial';
+        ctx.font = '9px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(alternativas[a].toUpperCase(), x, y);
@@ -157,9 +177,10 @@ export default function Home() {
 
     // Instruções
     ctx.fillStyle = '#666';
-    ctx.font = '10px Arial';
+    ctx.font = '9px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('Preencha as bolinhas com caneta preta', canvas.width / 2, 380);
+    ctx.fillText('Preencha as bolinhas com caneta preta', canvas.width / 2, 395);
+    ctx.fillText('Âncoras = padrão xadrez 4x4', canvas.width / 2, 410);
 
     // Abrir para impressão
     const dataUrl = canvas.toDataURL('image/png');
@@ -178,7 +199,6 @@ export default function Home() {
           <body>
             <img src="${dataUrl}" />
             <script>
-              // Imprimir automaticamente após 1s
               setTimeout(() => { window.print(); }, 1000);
             <\/script>
           </body>
@@ -217,7 +237,7 @@ export default function Home() {
     }
   };
 
-  // ========== LER GABARITO COM 12 ÂNCORAS ==========
+  // ========== LER GABARITO COM 12 ÂNCORAS (5 FPS) ==========
   const iniciarLeituraGabarito = () => {
     if (!videoRef.current || !canvasRef.current || !overlayCanvasRef.current) return;
 
@@ -225,11 +245,16 @@ export default function Home() {
     const canvas = canvasRef.current;
     const overlayCanvas = overlayCanvasRef.current;
 
+    // Limpar intervalo anterior
+    if (frameIdRef.current !== null) {
+      clearInterval(frameIdRef.current);
+      frameIdRef.current = null;
+    }
+
     const detectar = () => {
-      if (!video || video.readyState < 2) {
-        frameIdRef.current = requestAnimationFrame(detectar);
-        return;
-      }
+      if (!video || video.readyState < 2) return;
+
+      setContagemFrames(prev => prev + 1);
 
       // Configurar canvas
       canvas.width = video.videoWidth;
@@ -240,10 +265,7 @@ export default function Home() {
       const ctx = canvas.getContext('2d');
       const overlayCtx = overlayCanvas.getContext('2d');
       
-      if (!ctx || !overlayCtx) {
-        frameIdRef.current = requestAnimationFrame(detectar);
-        return;
-      }
+      if (!ctx || !overlayCtx) return;
 
       // Desenhar frame
       ctx.drawImage(video, 0, 0);
@@ -260,40 +282,48 @@ export default function Home() {
       // ===== 3. ENCONTRAR CONTORNOS =====
       const contornos = encontrarContornos(binaryData, canvas.width, canvas.height);
       
-      // ===== 4. ENCONTRAR ÂNCORAS =====
-      const ancorasEncontradas = encontrarAncoras(contornos, canvas.width, canvas.height);
+      // ===== 4. ENCONTRAR ÂNCORAS (CHECKERBOARD) =====
+      const ancorasEncontradas = encontrarAncorasCheckerboard(
+        contornos,
+        binaryData,
+        canvas.width,
+        canvas.height,
+        CONFIG_GABARITO.ancoras.length
+      );
       
-      // ===== 5. SE ENCONTROU ÂNCORAS, CALCULAR POSIÇÕES =====
+      // ===== 5. CALCULAR POSIÇÕES =====
       let bolinhas: Bolinha[] = [];
       let posicoes: any = null;
       
       if (ancorasEncontradas.length >= 4) {
         posicoes = calcularPosicoes(ancorasEncontradas, canvas.width, canvas.height);
-        bolinhas = lerBolinhas(imageData, posicoes);
-        
-        // Gerar resultado
-        const respostas: Record<string, string> = {};
-        let totalPreenchidas = 0;
-        
-        bolinhas.forEach(b => {
-          if (b.preenchida) {
-            respostas[`Q.${b.questao}`] = b.alternativa.toUpperCase();
-            totalPreenchidas++;
-          }
-        });
-        
-        if (totalPreenchidas > 0) {
-          setResultado({
-            id: '31059',
-            turma: '1ºTA',
-            prova: '1º ETAPA 2019',
-            respostas,
-            total: totalPreenchidas,
-            questoes: CONFIG_GABARITO.questoes
+        if (posicoes) {
+          bolinhas = lerBolinhas(imageData, posicoes);
+          
+          // Gerar resultado
+          const respostas: Record<string, string> = {};
+          let totalPreenchidas = 0;
+          
+          bolinhas.forEach(b => {
+            if (b.preenchida) {
+              respostas[`Q.${b.questao}`] = b.alternativa.toUpperCase();
+              totalPreenchidas++;
+            }
           });
-          setStatus(`✅ ${totalPreenchidas} respostas detectadas`);
-        } else {
-          setStatus('🔍 Nenhuma bolinha preenchida');
+          
+          if (totalPreenchidas > 0) {
+            setResultado({
+              id: '31059',
+              turma: '1ºTA',
+              prova: '1º ETAPA 2019',
+              respostas,
+              total: totalPreenchidas,
+              questoes: CONFIG_GABARITO.questoes
+            });
+            setStatus(`✅ ${totalPreenchidas} respostas detectadas`);
+          } else {
+            setStatus('🔍 Nenhuma bolinha preenchida');
+          }
         }
       } else {
         setStatus(`🔍 Âncoras: ${ancorasEncontradas.length}/12`);
@@ -302,24 +332,25 @@ export default function Home() {
       // ===== 6. DESENHAR OVERLAY =====
       overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
       
-      // Desenhar âncoras encontradas
-      ancorasEncontradas.forEach((ancora, i) => {
+      // Desenhar âncoras encontradas (verde)
+      ancorasEncontradas.forEach((ancora) => {
+        const size = ancora.tamanho;
         overlayCtx.strokeStyle = '#00FF00';
         overlayCtx.lineWidth = 3;
         overlayCtx.shadowColor = '#00FF00';
         overlayCtx.shadowBlur = 10;
         overlayCtx.strokeRect(
-          ancora.x - ancora.tamanho/2,
-          ancora.y - ancora.tamanho/2,
-          ancora.tamanho,
-          ancora.tamanho
+          ancora.x - size/2,
+          ancora.y - size/2,
+          size,
+          size
         );
         overlayCtx.shadowBlur = 0;
         
         overlayCtx.fillStyle = '#FFFFFF';
         overlayCtx.font = '10px Arial';
         overlayCtx.textAlign = 'center';
-        overlayCtx.fillText(`A${i+1}`, ancora.x, ancora.y - ancora.tamanho/2 - 8);
+        overlayCtx.fillText(`A${ancora.id}`, ancora.x, ancora.y - size/2 - 8);
       });
       
       // Desenhar bolinhas detectadas
@@ -328,16 +359,17 @@ export default function Home() {
         overlayCtx.strokeStyle = cor;
         overlayCtx.lineWidth = 2;
         overlayCtx.beginPath();
-        overlayCtx.arc(b.x, b.y, 10, 0, 2 * Math.PI);
+        overlayCtx.arc(b.x, b.y, posicoes?.raio || 10, 0, 2 * Math.PI);
         overlayCtx.stroke();
         
         if (b.preenchida) {
           overlayCtx.fillStyle = 'rgba(0, 255, 0, 0.2)';
           overlayCtx.beginPath();
-          overlayCtx.arc(b.x, b.y, 10, 0, 2 * Math.PI);
+          overlayCtx.arc(b.x, b.y, posicoes?.raio || 10, 0, 2 * Math.PI);
           overlayCtx.fill();
         }
         
+        // Label: questão + alternativa
         overlayCtx.fillStyle = '#FFFFFF';
         overlayCtx.font = '8px Arial';
         overlayCtx.textAlign = 'center';
@@ -349,12 +381,17 @@ export default function Home() {
         );
       });
 
-      // Continuar detectando
-      frameIdRef.current = requestAnimationFrame(detectar);
+      // Contador de FPS no canto
+      overlayCtx.fillStyle = 'rgba(255,255,255,0.5)';
+      overlayCtx.font = '10px Arial';
+      overlayCtx.textAlign = 'left';
+      overlayCtx.textBaseline = 'top';
+      overlayCtx.fillText(`FPS: ${fps} | Frame: ${contagemFrames}`, 10, 10);
     };
 
-    frameIdRef.current = requestAnimationFrame(detectar);
-    addDebug('📖 Lendo gabarito...');
+    // Executar a cada 200ms (5 FPS)
+    frameIdRef.current = setInterval(detectar, 200);
+    addDebug(`📖 Lendo gabarito a ${fps} FPS...`);
   };
 
   // ========== FUNÇÕES DE PROCESSAMENTO ==========
@@ -423,15 +460,19 @@ export default function Home() {
     return contornos;
   };
 
-  // ========== ENCONTRAR ÂNCORAS ==========
-  const encontrarAncoras = (
+  // ========== ENCONTRAR ÂNCORAS COM PADRÃO CHECKERBOARD ==========
+  const encontrarAncorasCheckerboard = (
     contornos: Array<{x: number, y: number}[]>,
+    binaryData: Uint8ClampedArray,
     width: number,
-    height: number
+    height: number,
+    totalEsperado: number
   ): Ancora[] => {
     const ancoras: Ancora[] = [];
+    const candidatos: {x: number, y: number, tamanho: number, score: number}[] = [];
     
     contornos.forEach(contorno => {
+      // Calcular bounding box
       let minX = Infinity, minY = Infinity;
       let maxX = -Infinity, maxY = -Infinity;
       
@@ -447,18 +488,82 @@ export default function Home() {
       const area = largura * altura;
       const proporcao = Math.max(largura, altura) / Math.min(largura, altura);
       
-      // Filtros para âncora (quadrado 2x2)
-      if (area > 50 && area < 500 && proporcao < 1.5) {
-        ancoras.push({
-          id: ancoras.length + 1,
-          x: minX + largura / 2,
-          y: minY + altura / 2,
-          tamanho: Math.max(largura, altura)
+      // Filtros básicos
+      if (area < 30 || area > 600) return;
+      if (proporcao > 1.3) return;
+      
+      // Centro
+      const centroX = minX + largura / 2;
+      const centroY = minY + altura / 2;
+      const tamanho = Math.max(largura, altura);
+      
+      // Verificar padrão checkerboard (4x4)
+      const score = verificarCheckerboard(binaryData, width, height, centroX, centroY, tamanho);
+      
+      if (score > 0.6) { // 60% de correspondência
+        candidatos.push({
+          x: centroX,
+          y: centroY,
+          tamanho: tamanho,
+          score: score
         });
       }
     });
     
+    // Ordenar por score e pegar os melhores
+    candidatos.sort((a, b) => b.score - a.score);
+    
+    // Selecionar os 12 melhores (ou menos se não tiver)
+    const quantidade = Math.min(candidatos.length, totalEsperado);
+    for (let i = 0; i < quantidade; i++) {
+      ancoras.push({
+        id: i + 1,
+        x: candidatos[i].x,
+        y: candidatos[i].y,
+        tamanho: candidatos[i].tamanho,
+        padrao: [] // Não usado na detecção
+      });
+    }
+    
     return ancoras;
+  };
+
+  // ========== VERIFICAR PADRÃO CHECKERBOARD ==========
+  const verificarCheckerboard = (
+    binaryData: Uint8ClampedArray,
+    width: number,
+    height: number,
+    cx: number,
+    cy: number,
+    tamanho: number
+  ): number => {
+    // Verificar um padrão 4x4 dentro da âncora
+    const cells = 4;
+    const cellSize = tamanho / cells;
+    let matches = 0;
+    let total = 0;
+    
+    for (let row = 0; row < cells; row++) {
+      for (let col = 0; col < cells; col++) {
+        const px = cx - tamanho/2 + (col * cellSize) + cellSize/2;
+        const py = cy - tamanho/2 + (row * cellSize) + cellSize/2;
+        
+        if (px < 0 || px >= width || py < 0 || py >= height) continue;
+        
+        const idx = Math.round(py) * width + Math.round(px);
+        const valor = binaryData[idx];
+        
+        // Padrão checkerboard: (row + col) % 2 === 0 → preto (0)
+        const esperado = (row + col) % 2 === 0 ? 0 : 255;
+        
+        total++;
+        if (valor === esperado) {
+          matches++;
+        }
+      }
+    }
+    
+    return total > 0 ? matches / total : 0;
   };
 
   // ========== CALCULAR POSIÇÕES ==========
@@ -466,19 +571,54 @@ export default function Home() {
     ancoras: Ancora[],
     width: number,
     height: number
-  ) => {
-    // Usar as âncoras para calcular a posição das bolinhas
-    // Simplificado: usar a primeira âncora como referência
-    const ref = ancoras[0];
-    const escala = ref.tamanho / 16; // Tamanho original da âncora
+  ): any => {
+    if (ancoras.length < 4) return null;
+    
+    // Ordenar âncoras por posição
+    const sorted = [...ancoras].sort((a, b) => a.x - b.x || a.y - b.y);
+    
+    // Encontrar extremos
+    const topAncoras = sorted.filter(a => a.y < height * 0.3);
+    const bottomAncoras = sorted.filter(a => a.y > height * 0.7);
+    const leftAncoras = sorted.filter(a => a.x < width * 0.3);
+    const rightAncoras = sorted.filter(a => a.x > width * 0.7);
+    
+    if (topAncoras.length < 2 || bottomAncoras.length < 2) {
+      // Fallback: usar as primeiras 4 âncoras
+      const ref = sorted.slice(0, 4);
+      const mediaX = ref.reduce((sum, a) => sum + a.x, 0) / ref.length;
+      const mediaY = ref.reduce((sum, a) => sum + a.y, 0) / ref.length;
+      const escala = ref.reduce((sum, a) => sum + a.tamanho, 0) / ref.length / 20;
+      
+      return {
+        startX: mediaX + (50 * escala),
+        startY: mediaY + (60 * escala),
+        spacingX: 55 * escala,
+        spacingY: 30 * escala,
+        raio: 10 * escala,
+        escala
+      };
+    }
+    
+    // Calcular com todas as âncoras
+    const topY = topAncoras.reduce((sum, a) => sum + a.y, 0) / topAncoras.length;
+    const bottomY = bottomAncoras.reduce((sum, a) => sum + a.y, 0) / bottomAncoras.length;
+    const leftX = leftAncoras.reduce((sum, a) => sum + a.x, 0) / leftAncoras.length;
+    const rightX = rightAncoras.reduce((sum, a) => sum + a.x, 0) / rightAncoras.length;
+    
+    const gabaritoLargura = rightX - leftX;
+    const gabaritoAltura = bottomY - topY;
+    const escala = ancoras.reduce((sum, a) => sum + a.tamanho, 0) / ancoras.length / 20;
     
     return {
-      startX: ref.x + (120 * escala),
-      startY: ref.y + (70 * escala),
-      spacingX: 55 * escala,
-      spacingY: 32 * escala,
-      raio: 10 * escala,
-      escala
+      startX: leftX + (gabaritoLargura * 0.18),
+      startY: topY + (gabaritoAltura * 0.22),
+      spacingX: (gabaritoLargura * 0.1),
+      spacingY: (gabaritoAltura * 0.085),
+      raio: Math.min(gabaritoLargura, gabaritoAltura) * 0.018,
+      escala,
+      totalLargura: gabaritoLargura,
+      totalAltura: gabaritoAltura
     };
   };
 
@@ -504,10 +644,11 @@ export default function Home() {
         // Analisar pixels da bolinha
         let totalPixels = 0;
         let pixelsPretos = 0;
+        const raioEfetivo = Math.max(raio, 5);
         
-        for (let dy = -raio; dy <= raio; dy++) {
-          for (let dx = -raio; dx <= raio; dx++) {
-            if (dx*dx + dy*dy > raio*raio) continue;
+        for (let dy = -raioEfetivo; dy <= raioEfetivo; dy++) {
+          for (let dx = -raioEfetivo; dx <= raioEfetivo; dx++) {
+            if (dx*dx + dy*dy > raioEfetivo*raioEfetivo) continue;
             
             const px = Math.floor(x + dx);
             const py = Math.floor(y + dy);
@@ -518,12 +659,12 @@ export default function Home() {
             const brilho = (data[idx] + data[idx+1] + data[idx+2]) / 3;
             
             totalPixels++;
-            if (brilho < 80) pixelsPretos++;
+            if (brilho < 100) pixelsPretos++;
           }
         }
         
         const percentualPreto = totalPixels > 0 ? (pixelsPretos / totalPixels) * 100 : 0;
-        const preenchida = percentualPreto > 35;
+        const preenchida = percentualPreto > 30;
         
         bolinhas.push({
           x,
@@ -542,7 +683,7 @@ export default function Home() {
   // ========== PARAR CÂMERA ==========
   const pararCamera = () => {
     if (frameIdRef.current !== null) {
-      cancelAnimationFrame(frameIdRef.current);
+      clearInterval(frameIdRef.current);
       frameIdRef.current = null;
     }
     if (streamRef.current) {
@@ -555,6 +696,7 @@ export default function Home() {
     setCameraAtiva(false);
     setResultado(null);
     setStatus('Aguardando...');
+    setContagemFrames(0);
     addDebug('⏹️ Câmera parada');
   };
 
@@ -562,7 +704,8 @@ export default function Home() {
   useEffect(() => {
     return () => {
       if (frameIdRef.current !== null) {
-        cancelAnimationFrame(frameIdRef.current);
+        clearInterval(frameIdRef.current);
+        frameIdRef.current = null;
       }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
@@ -574,7 +717,7 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-blue-600 text-white p-4 sticky top-0 z-10 shadow">
-        <h1 className="text-xl font-bold text-center">📋 Leitor de Gabarito com 12 Âncoras</h1>
+        <h1 className="text-xl font-bold text-center">📋 Leitor com 12 Âncoras Checkerboard</h1>
       </div>
 
       <div className="p-4 max-w-md mx-auto">
@@ -601,15 +744,32 @@ export default function Home() {
         {modo === 'gerar' ? (
           // ===== ABA GERAR =====
           <div className="bg-white p-4 rounded-lg shadow">
-            <h3 className="font-bold text-lg mb-4">📐 Gerar Gabarito com 12 Âncoras</h3>
+            <h3 className="font-bold text-lg mb-4">📐 Gerar Gabarito</h3>
             
-            <div className="bg-yellow-50 border border-yellow-200 p-3 rounded text-sm mb-4">
-              <p className="font-bold text-yellow-800">🔍 As 12 âncoras:</p>
-              <p className="text-xs text-yellow-700 mt-1">
-                Formam um quadrado 3x4 ao redor do gabarito.
-                <br/>
-                O app vai detectá-las automaticamente!
-              </p>
+            <div className="bg-green-50 border border-green-200 p-3 rounded text-sm mb-4">
+              <p className="font-bold text-green-800">✅ Âncoras Checkerboard (12):</p>
+              <div className="grid grid-cols-4 gap-1 mt-2">
+                <div className="bg-green-100 p-1 text-center text-xs rounded">
+                  <span className="font-bold">4x4</span>
+                  <br/>
+                  <span className="text-green-700">Alto contraste</span>
+                </div>
+                <div className="bg-green-100 p-1 text-center text-xs rounded">
+                  <span className="font-bold">12</span>
+                  <br/>
+                  <span className="text-green-700">âncoras</span>
+                </div>
+                <div className="bg-green-100 p-1 text-center text-xs rounded">
+                  <span className="font-bold">5 FPS</span>
+                  <br/>
+                  <span className="text-green-700">suave</span>
+                </div>
+                <div className="bg-green-100 p-1 text-center text-xs rounded">
+                  <span className="font-bold">Preto</span>
+                  <br/>
+                  <span className="text-green-700">Branco</span>
+                </div>
+              </div>
             </div>
 
             <button
@@ -620,8 +780,8 @@ export default function Home() {
             </button>
 
             <div className="mt-4 p-3 bg-gray-50 rounded text-xs">
-              <p className="font-bold">Âncoras 2x2 (12 no total):</p>
-              <div className="grid grid-cols-4 gap-1 mt-2">
+              <p className="font-bold">📐 Âncoras:</p>
+              <div className="grid grid-cols-3 gap-1 mt-1">
                 {CONFIG_GABARITO.ancoras.map(a => (
                   <div key={a.id} className="bg-gray-200 p-1 text-center text-xs rounded">
                     A{a.id}
@@ -641,6 +801,7 @@ export default function Home() {
                 <span className="font-bold">Status:</span>{' '}
                 {cameraAtiva ? '🟢 Ativa' : '⚪ Parada'}
                 {resultado && ' ✅ Leitura concluída'}
+                {cameraAtiva && ` 📊 ${contagemFrames} frames`}
               </span>
               {cameraAtiva && (
                 <button
@@ -685,7 +846,7 @@ export default function Home() {
                     <p className="text-5xl mb-3">📷</p>
                     <p className="text-lg font-medium">Clique em "Iniciar Câmera"</p>
                     <p className="text-sm text-gray-400 mt-1">
-                      Aponte para o gabarito com as 12 âncoras
+                      Aponte para o gabarito com as 12 âncoras checkerboard
                     </p>
                   </div>
                 </div>
@@ -762,7 +923,7 @@ export default function Home() {
             {/* Debug */}
             <div className="mt-4">
               <div className="flex justify-between items-center mb-1">
-                <p className="text-xs font-bold text-gray-500">🐛 DEBUG</p>
+                <p className="text-xs font-bold text-gray-500">🐛 DEBUG ({debug.length})</p>
                 <button
                   onClick={() => setDebug([])}
                   className="text-xs text-gray-500 hover:text-gray-700"
@@ -774,7 +935,7 @@ export default function Home() {
                 {debug.length === 0 ? (
                   <p className="text-gray-500">Aguardando ações...</p>
                 ) : (
-                  debug.map((msg, i) => (
+                  debug.slice(-15).map((msg, i) => (
                     <div key={i} className="border-b border-gray-800 py-0.5 text-xs">
                       {msg}
                     </div>
