@@ -2,33 +2,33 @@ export const MM_PARA_PT = 2.8346;
 
 export const PAGINA = { larguraMm: 210, alturaMm: 297 };
 
-// Início da área útil do gabarito — a partir da metade da página.
-// Tudo abaixo dessa linha (em mm, contando do topo) é onde âncoras,
-// QR Code e bolhas ficam. Acima disso fica livre para instruções.
+// Área reduzida onde fica todo o gabarito (âncoras + QR + bolhas),
+// centralizada horizontalmente, na parte inferior da folha.
 export const AREA_GABARITO = {
-  inicioYMm: PAGINA.alturaMm / 2, // 148.5mm — começa exatamente na metade
-  fimYMm: PAGINA.alturaMm,         // vai até o final da folha
+  larguraMm: 150,
+  alturaMm: 130,
+  xMm: 30,   // borda esquerda (centralizado: (210-150)/2)
+  yMm: 150,  // borda superior (distância do topo da página)
 };
+export const AREA_GABARITO_FIM_X = AREA_GABARITO.xMm + AREA_GABARITO.larguraMm; // 180
+export const AREA_GABARITO_FIM_Y = AREA_GABARITO.yMm + AREA_GABARITO.alturaMm;  // 280
 
-export const ANCORA = {
-  tamanhoMm: 8, // um pouco menor, já que a área disponível é menor
-  margemMm: 8,
-};
+export const ANCORA = { tamanhoMm: 8, margemMm: 6 };
 
 export const QRCODE = {
-  tamanhoMm: 20,
-  xMm: PAGINA.larguraMm - ANCORA.margemMm - ANCORA.tamanhoMm - 25,
-  yMm: AREA_GABARITO.inicioYMm + 8, // logo abaixo da linha de corte, com respiro
+  tamanhoMm: 18,
+  xMm: AREA_GABARITO_FIM_X - ANCORA.margemMm - ANCORA.tamanhoMm - 18 - 4, // 144
+  yMm: AREA_GABARITO.yMm + ANCORA.margemMm + ANCORA.tamanhoMm + 4,        // 168
 };
 
 export const GRID = {
   numeroQuestoes: 10,
   alternativas: ["A", "B", "C", "D", "E"],
   raioBolhaMm: 2.0,
-  espacamentoColunasMm: 7,
-  espacamentoLinhasMm: 7.5, // mais compacto, pra caber na metade da folha
-  inicioXMm: 22,
-  inicioYMm: AREA_GABARITO.inicioYMm + 35, // abaixo do QR Code
+  espacamentoColunasMm: 9,
+  espacamentoLinhasMm: 7,
+  inicioXMm: AREA_GABARITO.xMm + ANCORA.margemMm + ANCORA.tamanhoMm + 6, // 50
+  inicioYMm: QRCODE.yMm + QRCODE.tamanhoMm + 10,                        // 196
 };
 
 export function gerarCoordenadasBolhas() {

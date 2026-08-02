@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useOpenCV } from "@/hooks/useOpenCV";
-import { GRID, PAGINA, AREA_GABARITO, gerarCoordenadasBolhas } from "@/lib/gabaritoLayout";
+import { GRID, AREA_GABARITO, gerarCoordenadasBolhas } from "@/lib/gabaritoLayout";
 
-const LARGURA_CORRIGIDA = 800;
-const ALTURA_AREA_MM = AREA_GABARITO.fimYMm - AREA_GABARITO.inicioYMm; // 148.5mm
-const ALTURA_CORRIGIDA = Math.round((ALTURA_AREA_MM / PAGINA.larguraMm) * LARGURA_CORRIGIDA);
+const LARGURA_CORRIGIDA = 700;
+const ALTURA_CORRIGIDA = Math.round((AREA_GABARITO.alturaMm / AREA_GABARITO.larguraMm) * LARGURA_CORRIGIDA);
+const ASPECTO_GUIA = AREA_GABARITO.larguraMm / AREA_GABARITO.alturaMm;
 
 export default function LeitorGabarito() {
   const { cv, pronto } = useOpenCV();
@@ -18,20 +18,6 @@ export default function LeitorGabarito() {
     if (!pronto) return;
     let streamAtivo: MediaStream | null = null;
     let ativo = true;
-
-    async function iniciar() {
-      setStatus("Iniciando câmera...");
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
-        streamAtivo = stream;
-        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
-      } catch {
-        setStatus("Erro ao acessar a câmera.");
-        return;
-      }
-      setStatus("Posicione o gabarito no quadro...");
-      loop();
-    }
 
     function ordenarCantos(pontos: { x: number; y: number }[]) {
       const soma = pontos.map((p) => p.x + p.y);
@@ -51,33 +37,36 @@ export default function LeitorGabarito() {
       const hier = new cv.Mat();
       cv.findContours(bin, contornos, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-      const candidatos: { ponto: { x: number; y: number }; area: number }[] = [];
+      const candidatos: { x: number; y: number }[] = [];
       for (let i = 0; i < contornos.size(); i++) {
         const c = contornos.get(i);
         const area = cv.contourArea(c);
         const r = cv.boundingRect(c);
         const aspecto = r.width / r.height;
-        if (area > 300 && area < 8000 && aspecto > 0.7 && aspecto < 1.3) {
-          candidatos.push({ ponto: { x: r.x + r.width / 2, y: r.y + r.height / 2 }, area });
+        if (area > 200 && area < 6000 && aspecto > 0.7 && aspecto < 1.3) {
+          candidatos.push({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
         }
         c.delete();
       }
       bin.delete(); contornos.delete(); hier.delete();
 
+      // Escolhe os 4 pontos mais EXTREMOS (cantos reais), não os de maior área —
+      // evita confundir com os "olhos" de posicionamento do próprio QR Code.
       if (candidatos.length < 4) return null;
-      candidatos.sort((a, b) => b.area - a.area);
-      return ordenarCantos(candidatos.slice(0, 4).map((c) => c.ponto));
+      return ordenarCantos(candidatos);
     }
 
     function lerRespostas(matBinaria: any) {
-      const fatorX = LARGURA_CORRIGIDA / PAGINA.larguraMm;
-      const fatorY = ALTURA_CORRIGIDA / ALTURA_AREA_MM;
+      const fatorX = LARGURA_CORRIGIDA / AREA_GABARITO.larguraMm;
+      const fatorY = ALTURA_CORRIGIDA / AREA_GABARITO.alturaMm;
       const raioPx = Math.round(GRID.raioBolhaMm * fatorX * 0.8);
       const porQuestao: Record<number, { alt: string; px: number }[]> = {};
 
       gerarCoordenadasBolhas().forEach(({ questao, alternativa, xMm, yMm }) => {
-        const cx = Math.round(xMm * fatorX);
-        const cy = Math.round((yMm - AREA_GABARITO.inicioYMm) * fatorY);
+        // coordenadas relativas ao início da ÁREA (não da página inteira)
+        const cx = Math.round((xMm - AREA_GABARITO.xMm) * fatorX);
+        const cy = Math.round((yMm - AREA_GABARITO.yMm) * fatorY);
+
         const mascara = cv.Mat.zeros(matBinaria.rows, matBinaria.cols, cv.CV_8UC1);
         cv.circle(mascara, new cv.Point(cx, cy), raioPx, new cv.Scalar(255), -1);
         const res = new cv.Mat();
@@ -94,6 +83,20 @@ export default function LeitorGabarito() {
         respostas[Number(q)] = maior.px >= LIMIAR ? maior.alt : null;
       });
       return respostas;
+    }
+
+    async function iniciar() {
+      setStatus("Iniciando câmera...");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
+        streamAtivo = stream;
+        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+      } catch {
+        setStatus("Erro ao acessar a câmera.");
+        return;
+      }
+      setStatus("Alinhe os 4 cantos do gabarito com as marcações.");
+      loop();
     }
 
     function loop() {
@@ -120,13 +123,13 @@ export default function LeitorGabarito() {
         const corrigida = new cv.Mat();
         cv.warpPerspective(matOriginal, corrigida, matriz, new cv.Size(LARGURA_CORRIGIDA, ALTURA_CORRIGIDA));
 
-        // QR Code
-        const detector = new cv.QRCodeDetector();
-        const qr = detector.detectAndDecode(corrigida);
-
-        // bolhas
+        // Escala de cinza ANTES do QR — o detector exige 1 canal, não RGBA
         const corrigidaCinza = new cv.Mat();
         cv.cvtColor(corrigida, corrigidaCinza, cv.COLOR_RGBA2GRAY);
+
+        const detector = new cv.QRCodeDetector();
+        const qr = detector.detectAndDecode(corrigidaCinza);
+
         const binaria = new cv.Mat();
         cv.adaptiveThreshold(corrigidaCinza, binaria, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 25, 10);
         const respostas = lerRespostas(binaria);
@@ -150,15 +153,38 @@ export default function LeitorGabarito() {
 
   return (
     <div className="max-w-md mx-auto">
-      <video ref={videoRef} autoPlay playsInline muted className="w-full rounded-lg bg-black" />
-      <canvas ref={canvasRef} className="hidden" />
+      <div className="relative">
+        <video ref={videoRef} autoPlay playsInline muted className="w-full rounded-lg bg-black" />
+        <canvas ref={canvasRef} className="hidden" />
+
+        {/* Guia visual: moldura com cantos, na proporção da área do gabarito */}
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none"
+        >
+          <div
+            className="relative border-0"
+            style={{ width: "75%", aspectRatio: ASPECTO_GUIA }}
+          >
+            {/* 4 cantos em L, estilo mira de câmera */}
+            {[
+              "top-0 left-0 border-t-4 border-l-4",
+              "top-0 right-0 border-t-4 border-r-4",
+              "bottom-0 left-0 border-b-4 border-l-4",
+              "bottom-0 right-0 border-b-4 border-r-4",
+            ].map((classes, i) => (
+              <div key={i} className={`absolute w-8 h-8 border-white/90 ${classes}`} />
+            ))}
+          </div>
+        </div>
+      </div>
+
       <p className="text-center mt-2 text-sm text-gray-600">{status}</p>
 
       {resultado && (
         <div className="mt-4 bg-white border rounded-lg p-3">
           <p className="text-sm text-gray-500">QR Code:</p>
           <p className="font-mono text-sm mb-3">{resultado.qr}</p>
-          <div className="grid grid-cols-4 gap-2 text-sm">
+          <div className="grid grid-cols-5 gap-2 text-sm">
             {Object.entries(resultado.respostas).map(([q, alt]) => (
               <div key={q} className="bg-gray-50 rounded p-2 text-center">
                 {q}: <span className="font-mono font-bold">{alt ?? "—"}</span>

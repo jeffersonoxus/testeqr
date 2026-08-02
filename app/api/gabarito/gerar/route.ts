@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PDFDocument, rgb } from "pdf-lib";
 import QRCode from "qrcode";
-import { MM_PARA_PT, PAGINA, AREA_GABARITO, ANCORA, QRCODE, GRID, gerarCoordenadasBolhas } from "@/lib/gabaritoLayout";
+import {
+  MM_PARA_PT, PAGINA, AREA_GABARITO, AREA_GABARITO_FIM_X, AREA_GABARITO_FIM_Y,
+  ANCORA, QRCODE, GRID, gerarCoordenadasBolhas,
+} from "@/lib/gabaritoLayout";
 
 const mm = (v: number) => v * MM_PARA_PT;
 
@@ -11,29 +14,28 @@ export async function POST(req: NextRequest) {
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([mm(PAGINA.larguraMm), mm(PAGINA.alturaMm)]);
   const alturaPt = mm(PAGINA.alturaMm);
-  const largPt = mm(PAGINA.larguraMm);
   const y = (yMm: number) => alturaPt - mm(yMm);
 
-  // Linha visual marcando o início da área do gabarito (opcional, ajuda o aluno)
-  page.drawLine({
-    start: { x: 0, y: y(AREA_GABARITO.inicioYMm) },
-    end: { x: largPt, y: y(AREA_GABARITO.inicioYMm) },
-    thickness: 0.5,
-    color: rgb(0.7, 0.7, 0.7),
-    dashArray: [4, 4],
+  // Retângulo pontilhado mostrando a área do gabarito (guia visual pro aluno)
+  const xEsqPt = mm(AREA_GABARITO.xMm);
+  const xDirPt = mm(AREA_GABARITO_FIM_X);
+  const yTopoPt = y(AREA_GABARITO.yMm);
+  const yBasePt = y(AREA_GABARITO_FIM_Y);
+
+  page.drawRectangle({
+    x: xEsqPt, y: yBasePt,
+    width: xDirPt - xEsqPt, height: yTopoPt - yBasePt,
+    borderColor: rgb(0.75, 0.75, 0.75), borderWidth: 0.5, borderDashArray: [4, 4],
   });
 
-  // Âncoras — agora nos 4 cantos da ÁREA DO GABARITO (metade inferior), não da página inteira
+  // Âncoras nos 4 cantos da ÁREA (não da página inteira)
   const tam = mm(ANCORA.tamanhoMm);
   const marg = mm(ANCORA.margemMm);
-  const topoAreaPt = y(AREA_GABARITO.inicioYMm); // topo da área útil, em pontos
-  const baseAreaPt = y(AREA_GABARITO.fimYMm);    // base da página, em pontos
-
   [
-    { x: marg, y: topoAreaPt - marg - tam },           // superior-esquerda da área
-    { x: largPt - marg - tam, y: topoAreaPt - marg - tam }, // superior-direita da área
-    { x: marg, y: baseAreaPt + marg },                  // inferior-esquerda da área
-    { x: largPt - marg - tam, y: baseAreaPt + marg },   // inferior-direita da área
+    { x: xEsqPt + marg, y: yTopoPt - marg - tam },
+    { x: xDirPt - marg - tam, y: yTopoPt - marg - tam },
+    { x: xEsqPt + marg, y: yBasePt + marg },
+    { x: xDirPt - marg - tam, y: yBasePt + marg },
   ].forEach(({ x, y }) => page.drawRectangle({ x, y, width: tam, height: tam, color: rgb(0, 0, 0) }));
 
   // QR Code
