@@ -1,6 +1,8 @@
+// app/page.tsx - CORRIGIDO
+
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 
 export default function Home() {
   const [aba, setAba] = useState<'gerar' | 'ler'>('ler');
@@ -14,7 +16,6 @@ export default function Home() {
   const [imagemPreview, setImagemPreview] = useState<string | null>(null);
   const [cameraAtiva, setCameraAtiva] = useState(false);
 
-  // ========== INICIAR CÂMERA ==========
   const iniciarCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -40,7 +41,6 @@ export default function Home() {
     setDebug(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
-  // ========== CAPTURAR E LER ==========
   const capturarELer = () => {
     if (!videoRef.current || !canvasRef.current) {
       addDebug('❌ Video ou Canvas não disponível');
@@ -63,20 +63,21 @@ export default function Home() {
     setImagemPreview(imageDataUrl);
     addDebug(`📷 Imagem capturada: ${canvas.width}x${canvas.height}`);
     
-    // Processar
     setTimeout(() => {
-      const resultado = processarGabarito(canvas);
+      const resultadoProcessado = processarGabarito(canvas);
       
-      if (resultado && Object.keys(resultado.respostas).length > 0) {
-        setResultado({
+      if (resultadoProcessado && Object.keys(resultadoProcessado.respostas).length > 0) {
+        const total = Object.keys(resultadoProcessado.respostas).length;
+        const dadosCompletos = {
           id: '2025001',
           nome: 'João Silva',
           turma: '3A',
           prova: 'MATEMÁTICA',
-          respostas: resultado.respostas,
-          total: Object.keys(resultado.respostas).length
-        });
-        addDebug(`✅ ${resultado.total} questões detectadas`);
+          respostas: resultadoProcessado.respostas,
+          total: total
+        };
+        setResultado(dadosCompletos);
+        addDebug(`✅ ${total} questões detectadas`);
       } else {
         addDebug('❌ Nenhuma bolinha detectada!');
         addDebug('💡 Ajuste as coordenadas no código');
@@ -84,7 +85,6 @@ export default function Home() {
       
       setLoading(false);
       
-      // Parar câmera
       if (video.srcObject) {
         const tracks = (video.srcObject as MediaStream).getTracks();
         tracks.forEach(track => track.stop());
@@ -94,7 +94,6 @@ export default function Home() {
     }, 500);
   };
 
-  // ========== PROCESSAR COM OVERLAY ==========
   const processarGabarito = (canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext('2d')!;
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -158,7 +157,6 @@ export default function Home() {
         
         const percentualEscuro = totalPixels > 0 ? (pixelsEscuros / totalPixels) * 100 : 0;
         
-        // Guardar para debug
         bolinhasEncontradas.push({
           questao: q + 1,
           alternativa: alternativas[a],
@@ -188,13 +186,11 @@ export default function Home() {
     setBolinhasDetectadas(bolinhasEncontradas);
     addDebug(`📊 Total: ${Object.keys(respostas).length} questões detectadas`);
     
-    // Desenhar overlay no canvas
     desenharOverlay(canvas, bolinhasEncontradas);
     
     return { respostas };
   };
 
-  // ========== DESENHAR OVERLAY (ÂNCORAS VISUAIS) ==========
   const desenharOverlay = (canvas: HTMLCanvasElement, bolinhas: any[]) => {
     const overlayCanvas = overlayCanvasRef.current;
     if (!overlayCanvas) return;
@@ -203,39 +199,31 @@ export default function Home() {
     overlayCanvas.height = canvas.height;
     const ctx = overlayCanvas.getContext('2d')!;
     
-    // Limpar
     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     
-    // Desenhar cada bolinha analisada
     bolinhas.forEach(b => {
       const x = b.x;
       const y = b.y;
       const raio = 15;
       
-      // Cor conforme percentual de escuro
       if (b.marcada) {
-        // Verde = detectada como marcada
         ctx.strokeStyle = '#00ff00';
         ctx.lineWidth = 4;
         ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
       } else if (b.percentual > 20) {
-        // Amarelo = parcialmente escura
         ctx.strokeStyle = '#ffff00';
         ctx.lineWidth = 3;
         ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
       } else {
-        // Vermelho = clara (não marcada)
         ctx.strokeStyle = '#ff0000';
         ctx.lineWidth = 2;
       }
       
-      // Desenhar círculo
       ctx.beginPath();
       ctx.arc(x, y, raio, 0, 2 * Math.PI);
       ctx.fill();
       ctx.stroke();
       
-      // Escrever percentual
       ctx.fillStyle = '#ffffff';
       ctx.font = '12px Arial';
       ctx.textAlign = 'center';
@@ -282,7 +270,6 @@ export default function Home() {
             muted
           />
           
-          {/* Canvas do Overlay (mostra âncoras) */}
           <canvas
             ref={overlayCanvasRef}
             className="absolute top-0 left-0 w-full h-[400px] object-cover pointer-events-none"
@@ -341,7 +328,7 @@ export default function Home() {
           )}
         </div>
 
-        {/* DEBUG - MOSTRA O QUE ESTÁ ACONTECENDO */}
+        {/* DEBUG */}
         <div className="mt-4 bg-gray-900 text-green-400 p-3 rounded-lg text-xs font-mono max-h-[200px] overflow-y-auto">
           <p className="text-white font-bold mb-1">🐛 DEBUG:</p>
           {debug.length === 0 ? (
@@ -398,7 +385,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Ajuda para ajustar coordenadas */}
+        {/* Ajuda */}
         {debug.some(d => d.includes('Nenhuma bolinha')) && (
           <div className="mt-4 bg-yellow-50 border border-yellow-200 p-3 rounded text-xs text-yellow-800">
             <p className="font-bold">💡 Nenhuma bolinha detectada!</p>
@@ -409,9 +396,6 @@ export default function Home() {
               spacingX = 60 ← Distância entre alternativas<br/>
               spacingY = 40 ← Distância entre questões
             </pre>
-            <p className="mt-2 text-red-600 font-bold">
-              ⚠️ IMPORTANTE: O overlay mostra onde o app está procurando!
-            </p>
           </div>
         )}
       </div>
