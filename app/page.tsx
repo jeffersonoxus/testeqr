@@ -3,18 +3,13 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { GabaritoComAncoras } from './components/GabaritoComAncoras';
-import { 
-  configuracaoGabarito,
-  detectarAncoras,
-  lerBolinhasComAncoras,
-  desenharOverlayAncoras
-} from './lib/ancoras-gabarito';
-import type { ResultadoLeitura } from './types/gabarito';
+import { GabaritoComAncoras2x2 } from './components/GabaritoComAncoras2x2';
+import { detectarAncoras2x2, calcularPosicoes } from './lib/detector-ancoras';
+import { configAncoras } from './lib/ancoras-padrao';
 
 export default function Home() {
   const [modo, setModo] = useState<'gerar' | 'ler'>('gerar');
-  const [resultado, setResultado] = useState<ResultadoLeitura | null>(null);
+  const [resultado, setResultado] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [debug, setDebug] = useState<string[]>([]);
   const [cameraAtiva, setCameraAtiva] = useState(false);
@@ -31,11 +26,7 @@ export default function Home() {
   const iniciarCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: 'environment',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        }
+        video: { facingMode: 'environment' }
       });
       
       if (videoRef.current) {
@@ -46,7 +37,6 @@ export default function Home() {
       }
     } catch (error) {
       alert('Erro ao acessar câmera');
-      addDebug('❌ Erro na câmera');
     }
   };
 
@@ -68,7 +58,7 @@ export default function Home() {
     
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      addDebug('❌ Erro ao obter contexto do canvas');
+      addDebug('❌ Erro ao obter contexto');
       setLoading(false);
       return;
     }
@@ -77,36 +67,50 @@ export default function Home() {
     setImagemPreview(canvas.toDataURL('image/jpeg', 0.9));
     
     // 1. DETECTAR ÂNCORAS
-    const { encontradas, ajustes } = detectarAncoras(canvas, configuracaoGabarito.ancoras);
+    addDebug('🔍 Procurando âncoras 2x2...');
+    const ancorasEncontradas = detectarAncoras2x2(canvas, configAncoras.ancoras);
     
-    if (encontradas.length === 0) {
-      addDebug('❌ Nenhuma âncora encontrada!');
-      addDebug('💡 O gabarito precisa ter as cores: 🔴🟢🔵🟣');
+    if (ancorasEncontradas.length < 4) {
+      addDebug(`❌ Encontradas apenas ${ancorasEncontradas.length} âncoras (precisa de 4)`);
+      addDebug('💡 Verifique se o gabarito está bem iluminado e enquadrado');
       setLoading(false);
       return;
     }
     
-    addDebug(`✅ ${encontradas.length} âncoras encontradas!`);
-    addDebug(`📐 Ajuste: X=${ajustes.dx}, Y=${ajustes.dy}`);
+    addDebug(`✅ ${ancorasEncontradas.length} âncoras encontradas!`);
     
-    // Desenhar overlay com as âncoras
-    if (overlayCanvasRef.current) {
-      desenharOverlayAncoras(canvas, encontradas, overlayCanvasRef.current);
+    // Mostrar âncoras no overlay
+    desenharAncorasOverlay(canvas, ancorasEncontradas);
+    
+    // 2. CALCULAR POSIÇÕES
+    const posicoes = calcularPosicoes(canvas, ancorasEncontradas);
+    
+    if (!posicoes) {
+      addDebug('❌ Erro ao calcular posições');
+      setLoading(false);
+      return;
     }
     
-    // 2. LER BOLINHAS COM AS ÂNCORAS
-    const respostas = lerBolinhasComAncoras(canvas, encontradas, ajustes);
+    addDebug(`📍 Posições calculadas:`);
+    addDebug(`   Start: (${Math.round(posicoes.startX)}, ${Math.round(posicoes.startY)})`);
+    addDebug(`   Spacing: X=${Math.round(posicoes.spacingX)}, Y=${Math.round(posicoes.spacingY)}`);
+    addDebug(`   Tamanho âncora: ${Math.round(posicoes.tamanhoAncora)}px`);
+    
+    // 3. LER BOLINHAS
+    const respostas = lerBolinhas(canvas, posicoes);
     
     const total = Object.keys(respostas).length;
     
     if (total > 0) {
       setResultado({
-        id: '2025001',
-        nome: 'João Silva',
-        turma: '3A',
-        prova: 'MATEMÁTICA',
+        id: '31059',
+        nome: 'Aluno',
+        turma: '1ºTA',
+        prova: '1º ETAPA 2019',
         respostas,
-        total
+        total,
+        ancoras: ancorasEncontradas,
+        posicoes
       });
       addDebug(`✅ ${total} questões detectadas`);
     } else {
@@ -115,13 +119,109 @@ export default function Home() {
     
     setLoading(false);
     
-    // Parar câmera
     if (video.srcObject) {
       const tracks = (video.srcObject as MediaStream).getTracks();
       tracks.forEach(track => track.stop());
       video.srcObject = null;
       setCameraAtiva(false);
     }
+  };
+
+  const lerBolinhas = (canvas: HTMLCanvasElement, posicoes: any): Record<string, string> => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return {};
+    
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    const respostas: Record<string, string> = {};
+    const { questoes, alternativas } = configAncoras;
+    const { startX, startY, spacingX, spacingY, bolinhaRaio } = posicoes;
+    
+    for (let q = 0; q < questoes; q++) {
+      let alternativaMarcada: string | null = null;
+      let maiorEscuridao = 0;
+      
+      for (let a = 0; a < alternativas.length; a++) {
+        const x = startX + (a * spacingX);
+        const y = startY + (q * spacingY);
+        
+        if (x + bolinhaRaio > canvas.width || y + bolinhaRaio > canvas.height) {
+          continue;
+        }
+        
+        let totalPixels = 0;
+        let pixelsEscuros = 0;
+        const raio = bolinhaRaio;
+        
+        for (let dy = -raio; dy <= raio; dy++) {
+          for (let dx = -raio; dx <= raio; dx++) {
+            if (dx*dx + dy*dy > raio*raio) continue;
+            
+            const px = Math.floor(x + dx);
+            const py = Math.floor(y + dy);
+            
+            if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
+            
+            const index = (py * canvas.width + px) * 4;
+            const brilho = (data[index] + data[index+1] + data[index+2]) / 3;
+            
+            totalPixels++;
+            if (brilho < 120) pixelsEscuros++;
+          }
+        }
+        
+        const percentual = totalPixels > 0 ? (pixelsEscuros / totalPixels) * 100 : 0;
+        
+        if (percentual > 35 && percentual > maiorEscuridao) {
+          maiorEscuridao = percentual;
+          alternativaMarcada = alternativas[a];
+        }
+      }
+      
+      if (alternativaMarcada) {
+        respostas[(q + 1).toString()] = alternativaMarcada.toUpperCase();
+      }
+    }
+    
+    return respostas;
+  };
+
+  const desenharAncorasOverlay = (canvas: HTMLCanvasElement, ancoras: any[]) => {
+    const overlay = overlayCanvasRef.current;
+    if (!overlay) return;
+    
+    overlay.width = canvas.width;
+    overlay.height = canvas.height;
+    const ctx = overlay.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    
+    ancoras.forEach((ancora, i) => {
+      const cores = ['#FF0000', '#00FF00', '#0000FF', '#FF00FF'];
+      
+      // Círculo ao redor da âncora
+      ctx.strokeStyle = cores[i % cores.length];
+      ctx.lineWidth = 3;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.arc(ancora.x, ancora.y, ancora.tamanho, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      // Label
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 14px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`ANC-${i+1}`, ancora.x, ancora.y);
+      
+      // Coordenadas
+      ctx.fillStyle = '#FFFF00';
+      ctx.font = '10px Arial';
+      ctx.fillText(`(${Math.round(ancora.x)}, ${Math.round(ancora.y)})`, ancora.x, ancora.y + 20);
+    });
   };
 
   const pararCamera = () => {
@@ -131,65 +231,44 @@ export default function Home() {
       videoRef.current.srcObject = null;
       setCameraAtiva(false);
     }
-    setResultado(null);
-    setImagemPreview(null);
-    setDebug([]);
-  };
-
-  const copiarJSON = () => {
-    if (resultado) {
-      navigator.clipboard.writeText(JSON.stringify(resultado, null, 2));
-      alert('✅ JSON copiado!');
-    }
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-blue-600 text-white p-4 sticky top-0 z-10 shadow">
-        <h1 className="text-xl font-bold text-center">📋 Leitor com Âncoras</h1>
+      <div className="bg-blue-600 text-white p-4 sticky top-0 z-10">
+        <h1 className="text-xl font-bold text-center">📋 Leitor com Âncoras 2x2</h1>
       </div>
 
       <div className="p-4 max-w-md mx-auto">
         {/* Abas */}
         <div className="flex border-b bg-white rounded-t-lg mb-4 overflow-hidden">
           <button
-            className={`flex-1 py-3 font-medium transition ${
-              modo === 'gerar' 
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50' 
-                : 'text-gray-500 hover:bg-gray-50'
+            className={`flex-1 py-3 font-medium ${
+              modo === 'gerar' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'
             }`}
             onClick={() => { setModo('gerar'); pararCamera(); }}
           >
             📐 Gerar
           </button>
           <button
-            className={`flex-1 py-3 font-medium transition ${
-              modo === 'ler' 
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50' 
-                : 'text-gray-500 hover:bg-gray-50'
+            className={`flex-1 py-3 font-medium ${
+              modo === 'ler' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'
             }`}
-            onClick={() => { setModo('ler'); }}
+            onClick={() => setModo('ler')}
           >
             📸 Ler
           </button>
         </div>
 
-        {/* Conteúdo */}
         {modo === 'gerar' ? (
-          <GabaritoComAncoras />
+          <GabaritoComAncoras2x2 />
         ) : (
           <>
             {/* Status */}
-            <div className="bg-gray-100 p-3 rounded-lg text-sm mb-4 flex justify-between items-center">
-              <span>
-                <span className="font-bold">Status:</span>{' '}
-                {cameraAtiva ? '🟢 Câmera ativa' : '⚪ Câmera parada'}
-                {loading && ' ⏳ Processando...'}
-              </span>
-              {resultado && (
-                <span className="text-green-600 font-bold">✅ Lido!</span>
-              )}
+            <div className="bg-gray-100 p-2 rounded text-sm mb-4">
+              <span className="font-bold">Status:</span>{' '}
+              {cameraAtiva ? '🟢 Câmera ativa' : '⚪ Câmera parada'}
+              {loading && ' ⏳ Processando...'}
             </div>
 
             {/* Câmera */}
@@ -208,23 +287,13 @@ export default function Home() {
               />
               
               {!cameraAtiva && !imagemPreview && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/70 text-white">
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
                   <div className="text-center">
-                    <p className="text-5xl mb-3">📷</p>
-                    <p className="text-lg font-medium">Clique em "Iniciar Câmera"</p>
-                    <p className="text-sm text-gray-400 mt-1">
-                      Aponte para o gabarito com as âncoras coloridas
-                    </p>
+                    <p className="text-4xl mb-2">📷</p>
+                    <p>Clique em "Iniciar Câmera"</p>
+                    <p className="text-sm text-gray-400">Aponte para o gabarito com âncoras 2x2</p>
                   </div>
                 </div>
-              )}
-
-              {imagemPreview && !resultado && (
-                <img 
-                  src={imagemPreview} 
-                  alt="Preview" 
-                  className="w-full h-[400px] object-cover"
-                />
               )}
             </div>
 
@@ -233,7 +302,7 @@ export default function Home() {
               {!cameraAtiva && !imagemPreview ? (
                 <button
                   onClick={iniciarCamera}
-                  className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow hover:bg-blue-700 transition active:scale-95"
+                  className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow hover:bg-blue-700"
                 >
                   📷 Iniciar Câmera
                 </button>
@@ -243,19 +312,20 @@ export default function Home() {
                     <button
                       onClick={capturarELer}
                       disabled={loading}
-                      className="w-full bg-green-600 text-white py-3 rounded-lg font-bold shadow hover:bg-green-700 transition disabled:opacity-50 active:scale-95"
+                      className="w-full bg-green-600 text-white py-3 rounded-lg font-bold shadow hover:bg-green-700 disabled:opacity-50"
                     >
                       {loading ? '⏳ Analisando...' : '📸 Capturar e Ler'}
                     </button>
                   )}
-                  
                   <button
                     onClick={() => {
                       pararCamera();
                       setImagemPreview(null);
+                      setResultado(null);
+                      setDebug([]);
                       setTimeout(iniciarCamera, 300);
                     }}
-                    className="w-full bg-gray-600 text-white py-2 rounded-lg text-sm hover:bg-gray-700 transition"
+                    className="w-full bg-gray-600 text-white py-2 rounded-lg text-sm hover:bg-gray-700"
                   >
                     🔄 Reiniciar
                   </button>
@@ -284,7 +354,7 @@ export default function Home() {
                   <h3 className="font-bold text-lg text-green-600">✅ Gabarito Lido!</h3>
                   <button
                     onClick={() => { setResultado(null); setImagemPreview(null); }}
-                    className="text-sm text-blue-600 hover:underline"
+                    className="text-sm text-blue-600"
                   >
                     Nova Leitura
                   </button>
@@ -292,15 +362,13 @@ export default function Home() {
                 
                 <div className="grid grid-cols-2 gap-2 text-sm bg-gray-50 p-3 rounded">
                   <div><strong>ID:</strong> {resultado.id}</div>
-                  <div><strong>Nome:</strong> {resultado.nome}</div>
                   <div><strong>Turma:</strong> {resultado.turma}</div>
                   <div><strong>Prova:</strong> {resultado.prova}</div>
+                  <div><strong>Total:</strong> {resultado.total} questões</div>
                 </div>
 
                 <div>
-                  <p className="font-semibold text-sm mb-2">
-                    Respostas ({resultado.total} de 10 detectadas)
-                  </p>
+                  <p className="font-semibold text-sm mb-2">Respostas:</p>
                   <div className="grid grid-cols-5 gap-2">
                     {Object.entries(resultado.respostas).map(([q, r]) => (
                       <div key={q} className="bg-blue-50 border border-blue-200 rounded p-2 text-center">
@@ -311,53 +379,12 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="flex gap-2">
-                  <button
-                    onClick={copiarJSON}
-                    className="flex-1 bg-gray-100 text-gray-700 py-2 rounded text-sm hover:bg-gray-200 transition"
-                  >
-                    📋 Copiar JSON
-                  </button>
-                  <button
-                    onClick={() => {
-                      setResultado(null);
-                      setImagemPreview(null);
-                      iniciarCamera();
-                    }}
-                    className="flex-1 bg-blue-600 text-white py-2 rounded text-sm hover:bg-blue-700 transition"
-                  >
-                    🔄 Nova Leitura
-                  </button>
-                </div>
-
                 <details className="text-xs">
                   <summary className="cursor-pointer text-gray-500">📋 Ver JSON completo</summary>
-                  <pre className="bg-gray-100 p-2 rounded mt-1 overflow-x-auto text-xs">
+                  <pre className="bg-gray-100 p-2 rounded mt-1 overflow-x-auto">
                     {JSON.stringify(resultado, null, 2)}
                   </pre>
                 </details>
-              </div>
-            )}
-
-            {/* Dicas */}
-            {debug.some(d => d.includes('âncora encontrada')) && (
-              <div className="mt-4 bg-green-50 border border-green-200 p-3 rounded text-sm text-green-800">
-                <p className="font-bold">✅ Âncoras encontradas!</p>
-                <p className="mt-1">O app ajustou a leitura automaticamente.</p>
-              </div>
-            )}
-
-            {debug.some(d => d.includes('Nenhuma âncora')) && (
-              <div className="mt-4 bg-red-50 border border-red-200 p-3 rounded text-sm text-red-800">
-                <p className="font-bold">❌ Nenhuma âncora encontrada!</p>
-                <p className="mt-1">Certifique-se que o gabarito tem as cores:</p>
-                <div className="flex gap-4 mt-2">
-                  <span>🔴 Vermelho</span>
-                  <span>🟢 Verde</span>
-                  <span>🔵 Azul</span>
-                  <span>🟣 Rosa</span>
-                </div>
-                <p className="mt-1 text-xs">Gere o gabarito na aba "Gerar" e imprima.</p>
               </div>
             )}
           </>
